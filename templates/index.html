@@ -88,7 +88,6 @@
   </style>
 </head>
 <body>
-
   <h1>Braille Translation</h1>
 
   <section>
@@ -138,12 +137,19 @@
     imageInput.addEventListener('change', () => {
       if (imageInput.files.length > 0) {
         selectedFile = imageInput.files[0];
-        detectBtn.disabled = false;
-        detectedImage.src = "";
-        detectedText.textContent = "Detected text will appear here...";
-        outputImageSection.style.display = 'none';
-        outputTextSection.style.display = 'none';
-        stopCamera();
+        if (selectedFile.size > 5 * 1024 * 1024) { // 5MB लिमिट
+          alert("Image size exceeds 5MB. Please upload a smaller image.");
+          imageInput.value = "";
+          selectedFile = null;
+          detectBtn.disabled = true;
+        } else {
+          detectBtn.disabled = false;
+          detectedImage.src = "";
+          detectedText.textContent = "Detected text will appear here...";
+          outputImageSection.style.display = 'none';
+          outputTextSection.style.display = 'none';
+          stopCamera();
+        }
       } else {
         selectedFile = null;
         detectBtn.disabled = true;
@@ -206,15 +212,29 @@
         method: 'POST',
         body: formData
       })
-      .then(res => res.json())
-      .then(data => {
-        if (data.error) {
-          alert(data.error);
-        } else {
-          detectedImage.src = data.detected_image;
-          detectedText.textContent = data.detected_text_rows.join('\n');
-          outputImageSection.style.display = 'block';
-          outputTextSection.style.display = 'block';
+      .then(res => {
+        console.log('HTTP Status:', res.status); // स्टेटस लॉग करें
+        if (!res.ok) {
+          return res.text().then(text => {
+            throw new Error(`HTTP error! Status: ${res.status}, Response: ${text}`);
+          });
+        }
+        return res.text(); // पहले टेक्स्ट लें
+      })
+      .then(text => {
+        console.log('Raw Response:', text); // रॉ रिस्पॉन्स लॉग करें
+        try {
+          const data = JSON.parse(text);
+          if (data.error) {
+            alert(data.error);
+          } else {
+            detectedImage.src = data.detected_image;
+            detectedText.textContent = data.detected_text_rows.join('\n');
+            outputImageSection.style.display = 'block';
+            outputTextSection.style.display = 'block';
+          }
+        } catch (e) {
+          alert(`JSON Parse Error: ${e.message}\nRaw Response: ${text}`);
         }
       })
       .catch(err => {
@@ -242,6 +262,5 @@
       document.getElementById('confidence-value').textContent = e.target.value;
     });
   </script>
-
 </body>
 </html>
