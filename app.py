@@ -1,13 +1,36 @@
 import io
+import os
 import base64
+import logging
 import numpy as np
 import cv2
 from PIL import Image
-from ultralytics import YOLO
 from flask import Flask, request, jsonify, render_template
 
+# Optional: install gdown if not already installed
+try:
+    import gdown
+except ImportError:
+    import subprocess
+    subprocess.check_call(['pip', 'install', 'gdown'])
+    import gdown
+
+# Google Drive file ID
+file_id = "185eyNaNgLEczWChvurjY5Z7ArrcBt_Gj"
+model_path = "best.pt"
+
+# Download model from Google Drive if not present
+if not os.path.exists(model_path):
+    print("Downloading YOLO model from Google Drive...")
+    url = f"https://drive.google.com/uc?id={file_id}"
+    gdown.download(url, model_path, quiet=False)
+
+# Import YOLO after downloading the model
+from ultralytics import YOLO
+model = YOLO(model_path)
+
 app = Flask(__name__)
-model = YOLO(r"best.pt")
+logging.basicConfig(level=logging.DEBUG)
 
 def detect_braille(img_bytes, conf_threshold=0.25):
     img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
@@ -34,11 +57,11 @@ def detect_braille(img_bytes, conf_threshold=0.25):
     if not detections:
         return "", []
 
-    # Step 1: Sort detections by vertical position
+    # Step 1: Sort by vertical position
     detections.sort(key=lambda d: d['y_center'])
 
-    # Step 2: Group into rows manually
-    row_thresh = 20  # Adjust this based on average line spacing
+    # Step 2: Group into rows
+    row_thresh = 20
     rows = []
     current_row = []
     last_y = -100
@@ -52,7 +75,7 @@ def detect_braille(img_bytes, conf_threshold=0.25):
             last_y = y
         else:
             current_row.append(det)
-            last_y = (last_y + y) // 2  # smooth the row height
+            last_y = (last_y + y) // 2
 
     if current_row:
         rows.append(current_row)
@@ -76,7 +99,8 @@ def detect_braille(img_bytes, conf_threshold=0.25):
         label = det['label']
         color = colors[idx % len(colors)]
         cv2.rectangle(img_np, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(img_np, f'{label} {conf}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.putText(img_np, f'{label} {conf}', (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
     _, buffer = cv2.imencode('.jpg', cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
     img_str = base64.b64encode(buffer).decode('utf-8')
@@ -87,10 +111,6 @@ def detect_braille(img_bytes, conf_threshold=0.25):
 def index():
     return render_template('index.html')
 
-import logging
-
-logging.basicConfig(level=logging.DEBUG)
-
 @app.route('/detect', methods=['POST'])
 def detect():
     logging.debug(f"Received /detect request with files: {request.files} and form: {request.form}")
@@ -100,12 +120,11 @@ def detect():
 
     image_file = request.files['image']
     image_bytes = image_file.read()
-
     conf_threshold = request.form.get('confidence', default=0.25, type=float)
 
     try:
         detected_image, detected_text_rows = detect_braille(image_bytes, conf_threshold)
-        logging.debug(f"Detection successful, returning response")
+        logging.debug("Detection successful")
         return jsonify({
             'detected_image': f'data:image/jpeg;base64,{detected_image}',
             'detected_text_rows': detected_text_rows
