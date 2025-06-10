@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.DEBUG)
 app = Flask(__name__)
 try:
     # YOLO मॉडल को CPU पर लोड करें
-    model = YOLO("best(2).pt", device="cpu")
+    model = YOLO("best(2).pt")
     logging.info("YOLO model loaded successfully")
 except Exception as e:
     logging.error(f"Failed to load YOLO model: {str(e)}")
