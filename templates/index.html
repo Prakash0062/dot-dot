@@ -14,12 +14,6 @@
       color: black;
     }
 
-    @keyframes gradientBG {
-      0% { background-position: 0% 50%; }
-      50% { background-position: 100% 50%; }
-      100% { background-position: 0% 50%; }
-    }
-
     h1, h2 {
       text-align: center;
       color: black;
@@ -84,14 +78,8 @@
       border: 1px solid #ccc;
     }
 
-    #capture-btn {
-      background-color: #28a745;
-    }
-
-    #stop-camera-btn {
-      background-color: #dc3545;
-    }
-
+    #capture-btn { background-color: #28a745; }
+    #stop-camera-btn { background-color: #dc3545; }
     #copy-btn, #speak-btn {
       margin-top: 10px;
       margin-right: 10px;
@@ -103,20 +91,20 @@
 
   <h1>Braille Translation</h1>
 
-    <section>
-      <h2>Upload Image or Use Camera</h2>
-      <input type="file" id="image-input" accept="image/*" />
-      <label for="confidence-slider" style="color: white; margin-left: 10px;">Confidence: <span id="confidence-value">0.25</span></label>
-      <input type="range" id="confidence-slider" min="0" max="1" step="0.01" value="0.25" style="vertical-align: middle; margin-left: 10px; width: 150px;" />
-      <button id="detect-btn" disabled>Detect Braille</button>
+  <section>
+    <h2>Upload Image or Use Camera</h2>
+    <input type="file" id="image-input" accept="image/*" />
+    <label for="confidence-slider" style="margin-left: 10px;">Confidence: <span id="confidence-value">0.25</span></label>
+    <input type="range" id="confidence-slider" min="0" max="1" step="0.01" value="0.25" style="margin-left: 10px; width: 150px;" />
+    <button id="detect-btn" disabled>Detect Braille</button>
 
-      <div id="camera-section">
-        <video id="video" autoplay playsinline></video><br/>
-        <button id="start-camera-btn">Start Camera</button>
-        <button id="capture-btn" disabled>Capture from Camera</button>
-        <button id="stop-camera-btn" disabled>Stop Camera</button>
-      </div>
-    </section>
+    <div id="camera-section">
+      <video id="video" autoplay playsinline></video><br/>
+      <button id="start-camera-btn">Start Camera</button>
+      <button id="capture-btn" disabled>Capture from Camera</button>
+      <button id="stop-camera-btn" disabled>Stop Camera</button>
+    </div>
+  </section>
 
   <section id="output-image-section" style="display: none;">
     <h2>Detected Image</h2>
@@ -125,7 +113,7 @@
 
   <section id="output-text-section" style="display: none;">
     <h2>Detected Text</h2>
-    <div id="detected-text" style="color: black;">Detected text will appear here...</div>
+    <div id="detected-text">Detected text will appear here...</div>
     <button id="copy-btn">📋 Copy Text</button>
     <button id="speak-btn">🔊 Play Audio</button>
   </section>
@@ -164,10 +152,8 @@
 
     async function startCamera() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { exact: "environment" } }
-        });
-      } catch (err) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
+      } catch {
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
       }
       video.srcObject = stream;
@@ -175,11 +161,6 @@
       detectBtn.disabled = true;
       captureBtn.disabled = false;
       stopCameraBtn.disabled = false;
-      selectedFile = null;
-      detectedImage.src = "";
-      detectedText.textContent = "Detected text will appear here...";
-      outputImageSection.style.display = 'none';
-      outputTextSection.style.display = 'none';
     }
 
     function stopCamera() {
@@ -194,17 +175,10 @@
       stopCameraBtn.disabled = true;
     }
 
-    startCameraBtn.addEventListener('click', async () => {
-      await startCamera();
-    });
-
-    stopCameraBtn.addEventListener('click', () => {
-      stopCamera();
-    });
+    startCameraBtn.addEventListener('click', startCamera);
+    stopCameraBtn.addEventListener('click', stopCamera);
 
     captureBtn.addEventListener('click', () => {
-      if (!stream) return;
-
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -214,7 +188,7 @@
       canvas.toBlob(blob => {
         selectedFile = new File([blob], "captured.jpg", { type: "image/jpeg" });
         detectBtn.disabled = false;
-        detectBtn.click(); // Auto-detect after capture
+        detectBtn.click(); // Auto-detect
       }, 'image/jpeg');
     });
 
@@ -226,36 +200,21 @@
 
       const formData = new FormData();
       formData.append('image', selectedFile);
-      const confidenceValue = document.getElementById('confidence-slider').value;
-      formData.append('confidence', confidenceValue);
+      formData.append('confidence', document.getElementById('confidence-slider').value);
 
       fetch('/detect', {
         method: 'POST',
         body: formData
       })
-      .then(res => res.text())
-      .then(text => {
-        console.log("Raw response text:", text);
-        try {
-          const data = JSON.parse(text);
-          if (data.error) {
-            alert(data.error);
-            detectedImage.src = "";
-            detectedText.textContent = "";
-            outputImageSection.style.display = 'none';
-            outputTextSection.style.display = 'none';
-          } else {
-            detectedImage.src = data.detected_image;
-            detectedText.textContent = data.detected_text_rows.join('\n');
-            outputImageSection.style.display = 'block';
-            outputTextSection.style.display = 'block';
-          }
-        } catch (e) {
-          alert("Failed to parse JSON response: " + e.message);
-          detectedImage.src = "";
-          detectedText.textContent = "";
-          outputImageSection.style.display = 'none';
-          outputTextSection.style.display = 'none';
+      .then(res => res.json())
+      .then(data => {
+        if (data.error) {
+          alert(data.error);
+        } else {
+          detectedImage.src = data.detected_image;
+          detectedText.textContent = data.detected_text_rows.join('\n');
+          outputImageSection.style.display = 'block';
+          outputTextSection.style.display = 'block';
         }
       })
       .catch(err => {
@@ -268,26 +227,19 @@
     });
 
     copyBtn.addEventListener('click', () => {
-      const text = detectedText.textContent;
-      navigator.clipboard.writeText(text).then(() => {
+      navigator.clipboard.writeText(detectedText.textContent).then(() => {
         alert("Text copied to clipboard!");
       });
     });
 
     speakBtn.addEventListener('click', () => {
-      const text = detectedText.textContent;
-      const utterance = new SpeechSynthesisUtterance(text);
+      const utterance = new SpeechSynthesisUtterance(detectedText.textContent);
       utterance.lang = 'en-US';
       window.speechSynthesis.speak(utterance);
     });
-  </script>
 
-  <script>
-    const confidenceSlider = document.getElementById('confidence-slider');
-    const confidenceValueLabel = document.getElementById('confidence-value');
-
-    confidenceSlider.addEventListener('input', () => {
-      confidenceValueLabel.textContent = confidenceSlider.value;
+    document.getElementById('confidence-slider').addEventListener('input', (e) => {
+      document.getElementById('confidence-value').textContent = e.target.value;
     });
   </script>
 
