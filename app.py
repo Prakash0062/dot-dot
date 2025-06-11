@@ -1,58 +1,118 @@
 import io
-import os
-from PIL import Image
+import base64
 import numpy as np
 import cv2
-from flask import Flask, request, render_template, send_file, jsonify
+from PIL import Image
 from ultralytics import YOLO
+from flask import Flask, request, jsonify, render_template
 
 app = Flask(__name__)
 model = YOLO(r"best(2).pt")
 
-def detect_braille(img_bytes):
-    image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    img_np = np.array(image)
-    results = model(img_np)[0]
+def detect_braille(img_bytes, conf_threshold=0.25):
+    img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+    img_np = np.array(img)
 
-    detected_labels = []
+    results = model(img_np, conf=conf_threshold)
 
-    for box in results.boxes:
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-        cls_id = int(box.cls[0])  # Class ID
-        label = model.names[cls_id]  # Class name (like 'A', 'B', etc.)
-        detected_labels.append(label)
+    detections = []
+    for result in results:
+        for box in result.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].int().tolist()
+            confidence = round(float(box.conf[0]), 2)
+            label = model.names[int(box.cls[0])]
+            x_center = (x1 + x2) // 2
+            y_center = (y1 + y2) // 2
+            detections.append({
+                'box': [x1, y1, x2, y2],
+                'confidence': confidence,
+                'label': label,
+                'x_center': x_center,
+                'y_center': y_center
+            })
 
-        # Draw bounding box and label
-        cv2.rectangle(img_np, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(img_np, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+    if not detections:
+        return "", []
 
-    # Convert final image
-    _, img_encoded = cv2.imencode(".png", cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
-    return io.BytesIO(img_encoded.tobytes()), "".join(detected_labels)
+    # Step 1: Sort detections by vertical position
+    detections.sort(key=lambda d: d['y_center'])
 
-@app.route("/")
+    # Step 2: Group into rows manually
+    row_thresh = 20  # Adjust this based on average line spacing
+    rows = []
+    current_row = []
+    last_y = -100
+
+    for det in detections:
+        y = det['y_center']
+        if abs(y - last_y) > row_thresh:
+            if current_row:
+                rows.append(current_row)
+            current_row = [det]
+            last_y = y
+        else:
+            current_row.append(det)
+            last_y = (last_y + y) // 2  # smooth the row height
+
+    if current_row:
+        rows.append(current_row)
+
+    # Step 3: Sort each row left to right
+    detected_text_rows = []
+    for row in rows:
+        sorted_row = sorted(row, key=lambda d: d['x_center'])
+        row_labels = [d['label'] for d in sorted_row]
+        detected_text_rows.append(''.join(row_labels))
+
+    # Step 4: Draw boxes and labels
+    colors = [
+        (0, 255, 0), (0, 0, 255), (255, 0, 0),
+        (0, 255, 255), (255, 0, 255), (255, 255, 0),
+        (128, 0, 128), (0, 128, 128)
+    ]
+    for idx, det in enumerate(detections):
+        x1, y1, x2, y2 = det['box']
+        conf = det['confidence']
+        label = det['label']
+        color = colors[idx % len(colors)]
+        cv2.rectangle(img_np, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(img_np, f'{label} {conf}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+    _, buffer = cv2.imencode('.jpg', cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
+    img_str = base64.b64encode(buffer).decode('utf-8')
+
+    return img_str, detected_text_rows
+
+@app.route('/')
 def index():
-    return render_template("index.html")
+    return render_template('index.html')
 
-@app.route("/upload", methods=["POST"])
-def upload():
-    if "image" not in request.files:
-        return "No image file uploaded", 400
+import logging
 
-    image_file = request.files["image"]
-    img_bytes = image_file.read()
+logging.basicConfig(level=logging.DEBUG)
 
-    processed_img_io, detected_text = detect_braille(img_bytes)
+@app.route('/detect', methods=['POST'])
+def detect():
+    logging.debug(f"Received /detect request with files: {request.files} and form: {request.form}")
+    if 'image' not in request.files:
+        logging.error("No image file uploaded in request")
+        return jsonify({'error': 'No image file uploaded'}), 400
 
-    # Save image temporarily
-    with open("static/output.png", "wb") as f:
-        f.write(processed_img_io.getbuffer())
+    image_file = request.files['image']
+    image_bytes = image_file.read()
 
-    return jsonify({
-        "image_url": "/static/output.png",
-        "detected_text": detected_text
-    })
+    conf_threshold = request.form.get('confidence', default=0.25, type=float)
 
-if __name__ == "__main__":
-    os.makedirs("static", exist_ok=True)
+    try:
+        detected_image, detected_text_rows = detect_braille(image_bytes, conf_threshold)
+        logging.debug(f"Detection successful, returning response")
+        return jsonify({
+            'detected_image': f'data:image/jpeg;base64,{detected_image}',
+            'detected_text_rows': detected_text_rows
+        })
+    except Exception as e:
+        logging.exception("Exception during detection")
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
     app.run(debug=True)
